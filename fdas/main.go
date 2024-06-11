@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -71,11 +70,19 @@ func (s *Set) AddMulti(list ...string) {
 	}
 }
 
+func (s *Set) Keys() []string {
+	keys := make([]string, 0, s.Size())
+	for k := range s.list {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
 // Endpoints
 
 func postACL(tokens *Set, db *leveldb.DB, kv *capi.KV) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if !tokens.Has(c.Query("token")) {
+		if !tokens.Has(c.Param("token")) {
 			c.IndentedJSON(http.StatusUnauthorized, gin.H{"message": "unauthorized"})
 			return
 		}
@@ -114,7 +121,7 @@ func postACL(tokens *Set, db *leveldb.DB, kv *capi.KV) gin.HandlerFunc {
 
 func checkACL(tokens *Set, db *leveldb.DB, kv *capi.KV) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if !tokens.Has(c.Query("token")) {
+		if !tokens.Has(c.Param("token")) {
 			c.IndentedJSON(http.StatusUnauthorized, gin.H{"message": "unauthorized"})
 			return
 		}
@@ -154,7 +161,7 @@ func checkACL(tokens *Set, db *leveldb.DB, kv *capi.KV) gin.HandlerFunc {
 
 func postNamespace(tokens *Set, kv *capi.KV) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if !tokens.Has(c.Query("token")) {
+		if !tokens.Has(c.Param("token")) {
 			c.IndentedJSON(http.StatusUnauthorized, gin.H{"message": "unauthorized"})
 			return
 		}
@@ -172,7 +179,6 @@ func postNamespace(tokens *Set, kv *capi.KV) gin.HandlerFunc {
 				c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})
 				return
 			}
-			// fmt.Println(keys)
 			for _, key := range keys {
 				kv.Delete(key, nil)
 			}
@@ -218,11 +224,27 @@ func getToken(tokens *Set, db *leveldb.DB) gin.HandlerFunc {
 
 		err = db.Put([]byte("tokens"), []byte(tokensString), nil)
 		if err != nil {
-			fmt.Println(err)
+			c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})
 			return
 		}
 
 		c.IndentedJSON(200, gin.H{"token": id})
+	}
+}
+
+func invalidateToken(tokens *Set, db *leveldb.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tokens.Remove(c.Param("token"))
+
+		tokensString := strings.Join(tokens.Keys(), ",")
+
+		err := db.Put([]byte("tokens"), []byte(tokensString), nil)
+		if err != nil {
+			c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})
+			return
+		}
+
+		c.Status(http.StatusNoContent)
 	}
 }
 
@@ -243,7 +265,6 @@ func main() {
 	consulKV := consulClient.KV()
 
 	// LEVEL DB SETUP
-	fmt.Println(appConfig.LevelDBLocation)
 	levelDB, err := leveldb.OpenFile(appConfig.LevelDBLocation, nil)
 	if err != nil {
 		panic(err)
@@ -256,9 +277,10 @@ func main() {
 	// GIN API
 	router := gin.Default()
 	router.GET("/api/token", getToken(tokens, levelDB))
-	router.POST("/api/namespace", postNamespace(tokens, consulKV))
-	router.POST("/api/acl", postACL(tokens, levelDB, consulKV))
-	router.GET("/api/acl/check", checkACL(tokens, levelDB, consulKV))
+	router.PUT("/api/invalidate/:token", invalidateToken(tokens, levelDB))
+	router.POST("/api/namespace/:token", postNamespace(tokens, consulKV))
+	router.POST("/api/acl/:token", postACL(tokens, levelDB, consulKV))
+	router.GET("/api/acl/check/:token", checkACL(tokens, levelDB, consulKV))
 
 	router.Run("localhost:8080")
 }
