@@ -15,3 +15,8 @@
 - https://developer.hashicorp.com/consul/docs/dynamic-app-config/kv/store?utm_source=docs
 - https://developer.hashicorp.com/consul/docs/dynamic-app-config/kv
 - https://github.com/hashicorp/consul?tab=readme-ov-file
+
+- https://pkg.go.dev/github.com/hashicorp/consul/api#section-readme
+
+- https://pkg.go.dev/github.com/syndtr/goleveldb/leveldb#pkg-types
+- https://developer.hashicorp.com/consul/api-docs/kv#recurse
