@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -110,6 +111,7 @@ func postACL(tokens *Set, db *leveldb.DB, kv *capi.KV) gin.HandlerFunc {
 
 		err = db.Put([]byte(newACL.User+"/"+newACL.Object), []byte(newACL.Relation), nil)
 		if err != nil {
+			fmt.Println("{\"error\": \"Putting items in levelDB\", \"method\": \"postACL\"}")
 			c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})
 			return
 		}
@@ -173,9 +175,15 @@ func postNamespace(tokens *Set, kv *capi.KV) gin.HandlerFunc {
 			return
 		}
 		pair, _, err := kv.Get(newNamespace.Namespace, nil)
-		if err == nil || pair != nil {
+		if err != nil {
+			fmt.Println("{\"error\": \"Getting items from consul\", \"method\": \"postNamespace\"}")
+			c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})
+			return
+		}
+		if pair != nil {
 			keys, _, err := kv.Keys(newNamespace.Namespace, "", nil)
 			if err != nil {
+				fmt.Println("{\"error\": \"Reading keys from consul\", \"method\": \"postNamespace\"}")
 				c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})
 				return
 			}
@@ -194,6 +202,7 @@ func postNamespace(tokens *Set, kv *capi.KV) gin.HandlerFunc {
 
 			err = createRelations(newNamespace.Namespace, key, value.Union, &relatshionshipMap, kv)
 			if err != nil {
+				fmt.Println("{\"error\": \"Creating relatshionships in consul\", \"method\": \"postNamespace\"}")
 				c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})
 				return
 			}
@@ -202,6 +211,7 @@ func postNamespace(tokens *Set, kv *capi.KV) gin.HandlerFunc {
 		p := &capi.KVPair{Key: newNamespace.Namespace, Value: []byte(allRelations)}
 		_, err = kv.Put(p, nil)
 		if err != nil {
+			fmt.Println("{\"error\": \"Putting items in levelDB\", \"method\": \"postNamespace\"}")
 			c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})
 			return
 		}
@@ -224,6 +234,7 @@ func getToken(tokens *Set, db *leveldb.DB) gin.HandlerFunc {
 
 		err = db.Put([]byte("tokens"), []byte(tokensString), nil)
 		if err != nil {
+			fmt.Println("{\"error\": \"Putting new user token in levelDB\", \"method\": \"getToken\"}")
 			c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})
 			return
 		}
@@ -240,6 +251,7 @@ func invalidateToken(tokens *Set, db *leveldb.DB) gin.HandlerFunc {
 
 		err := db.Put([]byte("tokens"), []byte(tokensString), nil)
 		if err != nil {
+			fmt.Println("{\"error\": \"Putting other tokens in levelDB\", \"method\": \"invalidateToken\"}")
 			c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})
 			return
 		}
@@ -302,10 +314,14 @@ func createRelations(namespace string, key string, unionItems []string, relatshi
 		p := &capi.KVPair{Key: namespace + "/" + parent + "/" + key, Value: []byte{}}
 		_, err = kv.Put(p, nil)
 		if err != nil {
+			fmt.Println("{\"error\": \"Critical while putting items in consul\", \"method\": \"createRelations\"}")
 			return err
 		}
 		if len((*relatshionshipMap)[parent]) != 0 {
-			createRelations(namespace, key, (*relatshionshipMap)[parent], relatshionshipMap, kv)
+			err = createRelations(namespace, key, (*relatshionshipMap)[parent], relatshionshipMap, kv)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil
