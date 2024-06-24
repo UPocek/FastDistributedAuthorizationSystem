@@ -161,7 +161,7 @@ func checkACL(tokens *Set, db *leveldb.DB, kv *capi.KV) gin.HandlerFunc {
 			return
 		}
 
-		c.JSON(http.StatusOK, value != nil)
+		c.JSON(http.StatusOK, gin.H{"authorized": value != nil})
 
 	}
 }
