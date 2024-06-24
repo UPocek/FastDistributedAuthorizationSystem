@@ -88,16 +88,17 @@ func postACL(tokens *Set, db *leveldb.DB, kv *capi.KV) gin.HandlerFunc {
 			return
 		}
 		var newACL fdasACL
-		if err := c.BindJSON(&newACL); err != nil {
+		err := c.BindJSON(&newACL)
+		if err != nil || newACL.Object == "" || newACL.Relation == "" || newACL.User == "" {
 			c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "invalid ACL definition"})
 			return
 		}
-		parts := strings.Split(newACL.Object, ":")
-		if len(parts) != 2 {
+		objectParts := strings.Split(newACL.Object, ":")
+		if len(objectParts) != 2 {
 			c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "invalid ACL object definition"})
 			return
 		}
-		namespace := parts[0]
+		namespace := objectParts[0]
 		pair, _, err := kv.Get(namespace, nil)
 		if err != nil || pair == nil {
 			c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "invalid ACL namespace"})
@@ -132,7 +133,12 @@ func checkACL(tokens *Set, db *leveldb.DB, kv *capi.KV) gin.HandlerFunc {
 		user := c.Query("user")
 
 		if object == "" || relation == "" || user == "" {
-			c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "invalid ACL request"})
+			c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "invalid ACL request, empty string"})
+			return
+		}
+		parts := strings.Split(object, ":")
+		if len(parts) != 2 {
+			c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "invalid ACL object definition"})
 			return
 		}
 
@@ -145,14 +151,15 @@ func checkACL(tokens *Set, db *leveldb.DB, kv *capi.KV) gin.HandlerFunc {
 			c.IndentedJSON(http.StatusOK, true)
 			return
 		}
-		parts := strings.Split(object, ":")
-		if len(parts) != 2 {
-			c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "invalid ACL object definition"})
-			return
-		}
+
 		namespace := parts[0]
 		value, _, err := kv.Get(namespace+"/"+string(data)+"/"+relation, nil)
-		if err == nil || value != nil {
+		if err != nil {
+			fmt.Println("{\"error\": \"Checking if relation is valid\", \"method\": \"checkACL\"}")
+			c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})
+			return
+		}
+		if value != nil {
 			c.IndentedJSON(http.StatusOK, true)
 		} else {
 			c.IndentedJSON(http.StatusOK, false)
@@ -180,25 +187,55 @@ func postNamespace(tokens *Set, kv *capi.KV) gin.HandlerFunc {
 			c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})
 			return
 		}
+		var oldKeys []string
+		var oldValues [][]byte
 		if pair != nil {
-			keys, _, err := kv.Keys(newNamespace.Namespace, "", nil)
+			oldKeys, _, err = kv.Keys(newNamespace.Namespace, "", nil)
 			if err != nil {
 				fmt.Println("{\"error\": \"Reading keys from consul\", \"method\": \"postNamespace\"}")
 				c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})
 				return
 			}
-			for _, key := range keys {
+			for _, key := range oldKeys {
+				value, _, err := kv.Get(key, nil)
+				if err != nil {
+					fmt.Println("{\"error\": \"Reading values from consul\", \"method\": \"postNamespace\"}")
+					c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})
+					return
+				}
+				oldValues = append(oldValues, value.Value)
 				kv.Delete(key, nil)
 			}
 		}
 
 		for key, value := range newNamespace.Relations {
+			if key == "" {
+				c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "invalid namespace definition, using empty key"})
+				// Roll-back kv.Delete(key, nil)
+				for index, key := range oldKeys {
+					kv.Put(&capi.KVPair{Key: key, Value: oldValues[index]}, nil)
+				}
+				return
+			}
+
 			if allRelations == "" {
 				allRelations = key
 			} else {
 				allRelations += "," + key
 			}
+
 			relatshionshipMap[key] = value.Union
+
+			for _, item := range value.Union {
+				if _, ok := relatshionshipMap[item]; !ok {
+					c.IndentedJSON(http.StatusBadRequest, gin.H{"message": fmt.Sprintf("invalid namespace definition, using role %s before defining it", item)})
+					// Roll-back kv.Delete(key, nil)
+					for i := range oldKeys {
+						kv.Put(&capi.KVPair{Key: oldKeys[i], Value: oldValues[i]}, nil)
+					}
+					return
+				}
+			}
 
 			err = createRelations(newNamespace.Namespace, key, value.Union, &relatshionshipMap, kv)
 			if err != nil {
