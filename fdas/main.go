@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"os"
@@ -125,7 +126,7 @@ func postACL(tokens *Set, db *leveldb.DB, kv *capi.KV) gin.HandlerFunc {
 func checkACL(tokens *Set, db *leveldb.DB, kv *capi.KV) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !tokens.Has(c.Param("token")) {
-			c.IndentedJSON(http.StatusUnauthorized, gin.H{"message": "unauthorized"})
+			c.JSON(http.StatusUnauthorized, gin.H{"message": "unauthorized"})
 			return
 		}
 		object := c.Query("object")
@@ -133,22 +134,22 @@ func checkACL(tokens *Set, db *leveldb.DB, kv *capi.KV) gin.HandlerFunc {
 		user := c.Query("user")
 
 		if object == "" || relation == "" || user == "" {
-			c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "invalid ACL request, empty string"})
+			c.JSON(http.StatusBadRequest, gin.H{"message": "invalid ACL request, empty string"})
 			return
 		}
-		parts := strings.Split(object, ":")
+		parts := strings.SplitN(object, ":", 2)
 		if len(parts) != 2 {
-			c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "invalid ACL object definition"})
+			c.JSON(http.StatusBadRequest, gin.H{"message": "invalid ACL object definition"})
 			return
 		}
 
 		data, err := db.Get([]byte(user+"/"+object), nil)
 		if err != nil {
-			c.IndentedJSON(http.StatusNotFound, gin.H{"message": "ACL not found"})
+			c.JSON(http.StatusNotFound, gin.H{"message": "ACL not found"})
 			return
 		}
-		if string(data) == relation {
-			c.IndentedJSON(http.StatusOK, true)
+		if bytes.Equal(data, []byte(relation)) {
+			c.JSON(http.StatusOK, true)
 			return
 		}
 
@@ -156,14 +157,11 @@ func checkACL(tokens *Set, db *leveldb.DB, kv *capi.KV) gin.HandlerFunc {
 		value, _, err := kv.Get(namespace+"/"+string(data)+"/"+relation, nil)
 		if err != nil {
 			fmt.Println("{\"error\": \"Checking if relation is valid\", \"method\": \"checkACL\"}")
-			c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})
+			c.JSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})
 			return
 		}
-		if value != nil {
-			c.IndentedJSON(http.StatusOK, true)
-		} else {
-			c.IndentedJSON(http.StatusOK, false)
-		}
+
+		c.JSON(http.StatusOK, value != nil)
 
 	}
 }
