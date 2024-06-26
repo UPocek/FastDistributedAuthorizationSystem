@@ -14,8 +14,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Structs
-
 type appConfig struct {
 	LevelDBLocation string `yaml:"LevelDBLocation"`
 }
@@ -79,8 +77,6 @@ func (s *Set) Keys() []string {
 	}
 	return keys
 }
-
-// Endpoints
 
 func postACL(tokens *Set, db *leveldb.DB, kv *capi.KV) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -336,9 +332,11 @@ func loadTokens(db *leveldb.DB) *Set {
 	allIssuedTokens := NewSet()
 	data, err := db.Get([]byte("tokens"), nil)
 
-	if err == nil {
-		allIssuedTokens.AddMulti(strings.Split(string(data), ",")...)
+	if err != nil {
+		panic(err)
 	}
+
+	allIssuedTokens.AddMulti(strings.Split(string(data), ",")...)
 
 	return allIssuedTokens
 }
