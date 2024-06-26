@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"gopkg.in/yaml.v3"
 	"net/http"
 	"os"
 	"strings"
@@ -11,7 +12,6 @@ import (
 	"github.com/google/uuid"
 	capi "github.com/hashicorp/consul/api"
 	"github.com/syndtr/goleveldb/leveldb"
-	"gopkg.in/yaml.v3"
 )
 
 // Structs
@@ -89,9 +89,13 @@ func postACL(tokens *Set, db *leveldb.DB, kv *capi.KV) gin.HandlerFunc {
 			return
 		}
 		var newACL fdasACL
+		// Output request text
+		fmt.Println(c.Request.Body)
 		err := c.BindJSON(&newACL)
+		fmt.Println(newACL)
 		if err != nil || newACL.Object == "" || newACL.Relation == "" || newACL.User == "" {
 			c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "invalid ACL definition"})
+			panic(err)
 			return
 		}
 		objectParts := strings.Split(newACL.Object, ":")
@@ -305,7 +309,9 @@ func main() {
 	yaml.Unmarshal(configFile, &appConfig)
 
 	// ConsulDB SETUP
-	consulClient, err := capi.NewClient(capi.DefaultConfig())
+	consulConfig := capi.DefaultConfig()
+	consulConfig.Address = "consul:8500" // Use "consul" host
+	consulClient, err := capi.NewClient(consulConfig)
 	if err != nil {
 		panic(err)
 	}
@@ -329,7 +335,7 @@ func main() {
 	router.POST("/api/acl/:token", postACL(tokens, levelDB, consulKV))
 	router.GET("/api/acl/check/:token", checkACL(tokens, levelDB, consulKV))
 
-	router.Run("localhost:8080")
+	router.Run("0.0.0.0:8080")
 }
 
 func loadTokens(db *leveldb.DB) *Set {
