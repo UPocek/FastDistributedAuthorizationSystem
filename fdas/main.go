@@ -22,6 +22,7 @@ import (
 type appConfig struct {
 	LevelDBLocation string `yaml:"LevelDBLocation"`
 	EncryptionKey   string `yaml:"EncryptionKey"`
+	Port            string `yaml:"Port"`
 }
 
 type fdasRelations struct {
@@ -241,6 +242,7 @@ func postNamespace(tokens *Set, kv *capi.KV) gin.HandlerFunc {
 			relatshionshipMap[key] = value.Union
 
 			for _, item := range value.Union {
+				item = strings.ReplaceAll(item, "/", "")
 				if _, ok := relatshionshipMap[item]; !ok {
 					c.IndentedJSON(http.StatusBadRequest, gin.H{"message": fmt.Sprintf("invalid namespace definition, using role %s before defining it", item)})
 					// Roll-back kv.Delete(key, nil)
@@ -358,7 +360,7 @@ func main() {
 	router.POST("/api/acl/:token", postACL(tokens, levelDB, consulKV))
 	router.GET("/api/acl/check/:token", checkACL(tokens, levelDB, consulKV))
 
-	router.Run("0.0.0.0:8080")
+	router.Run(fmt.Sprintf("0.0.0.0:%s", appConfig.Port))
 }
 
 func loadTokens(db *leveldb.DB, encryptionKey string) *Set {
