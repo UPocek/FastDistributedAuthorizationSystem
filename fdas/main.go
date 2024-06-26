@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
+	"gopkg.in/yaml.v3"
 	"log"
 	"net/http"
 	"os"
@@ -16,7 +17,6 @@ import (
 	"github.com/google/uuid"
 	capi "github.com/hashicorp/consul/api"
 	"github.com/syndtr/goleveldb/leveldb"
-	"gopkg.in/yaml.v3"
 )
 
 type appConfig struct {
@@ -91,6 +91,8 @@ func postACL(tokens *Set, db *leveldb.DB, kv *capi.KV) gin.HandlerFunc {
 			return
 		}
 		var newACL fdasACL
+		// Output request text
+		fmt.Println(c.Request.Body)
 		err := c.BindJSON(&newACL)
 		object := strings.ReplaceAll(newACL.Object, "/", "")
 		relation := strings.ReplaceAll(newACL.Relation, "/", "")
@@ -326,7 +328,13 @@ func main() {
 	yaml.Unmarshal(configFile, &appConfig)
 
 	// ConsulDB SETUP
-	consulClient, err := capi.NewClient(capi.DefaultConfig())
+	consulConfig := capi.DefaultConfig()
+	consulAddress := os.Getenv("CONSUL_ADDRESS")
+	if consulAddress == "" {
+		consulAddress = "localhost:8500" // Default value
+	}
+	consulConfig.Address = consulAddress
+	consulClient, err := capi.NewClient(consulConfig)
 	if err != nil {
 		panic(err)
 	}
@@ -350,7 +358,7 @@ func main() {
 	router.POST("/api/acl/:token", postACL(tokens, levelDB, consulKV))
 	router.GET("/api/acl/check/:token", checkACL(tokens, levelDB, consulKV))
 
-	router.Run("localhost:8080")
+	router.Run("0.0.0.0:8080")
 }
 
 func loadTokens(db *leveldb.DB, encryptionKey string) *Set {

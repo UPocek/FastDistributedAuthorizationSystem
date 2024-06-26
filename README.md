@@ -1,5 +1,12 @@
 # FastDistributedAuthorizationSystem
 
+## Run
+
+```
+docker compose build
+docker compose up
+```
+
 ## Problem
 Goal of this project is to create fast and scalable auth service that other users can use as an api service
 
