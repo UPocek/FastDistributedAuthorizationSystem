@@ -2,8 +2,13 @@ package main
 
 import (
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"crypto/sha256"
 	"fmt"
 	"gopkg.in/yaml.v3"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -14,10 +19,9 @@ import (
 	"github.com/syndtr/goleveldb/leveldb"
 )
 
-// Structs
-
 type appConfig struct {
 	LevelDBLocation string `yaml:"LevelDBLocation"`
+	EncryptionKey   string `yaml:"EncryptionKey"`
 }
 
 type fdasRelations struct {
@@ -80,8 +84,6 @@ func (s *Set) Keys() []string {
 	return keys
 }
 
-// Endpoints
-
 func postACL(tokens *Set, db *leveldb.DB, kv *capi.KV) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !tokens.Has(c.Param("token")) {
@@ -92,13 +94,16 @@ func postACL(tokens *Set, db *leveldb.DB, kv *capi.KV) gin.HandlerFunc {
 		// Output request text
 		fmt.Println(c.Request.Body)
 		err := c.BindJSON(&newACL)
-		fmt.Println(newACL)
-		if err != nil || newACL.Object == "" || newACL.Relation == "" || newACL.User == "" {
+		object := strings.ReplaceAll(newACL.Object, "/", "")
+		relation := strings.ReplaceAll(newACL.Relation, "/", "")
+		user := strings.ReplaceAll(newACL.User, "/", "")
+
+		if err != nil || object == "" || relation == "" || user == "" {
 			c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "invalid ACL definition"})
 			panic(err)
 			return
 		}
-		objectParts := strings.Split(newACL.Object, ":")
+		objectParts := strings.SplitN(object, ":", 2)
 		if len(objectParts) != 2 {
 			c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "invalid ACL object definition"})
 			return
@@ -110,14 +115,14 @@ func postACL(tokens *Set, db *leveldb.DB, kv *capi.KV) gin.HandlerFunc {
 			return
 		}
 		availableRelations := strings.Split(string(pair.Value), ",")
-		if !checkIfRelationValid(newACL.Relation, &availableRelations) {
+		if !checkIfRelationValid(relation, &availableRelations) {
 			c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "ACL relation not supported in this namespace"})
 			return
 		}
 
-		err = db.Put([]byte(newACL.User+"/"+newACL.Object), []byte(newACL.Relation), nil)
+		err = db.Put([]byte(user+"/"+object), []byte(relation), nil)
 		if err != nil {
-			fmt.Println("{\"error\": \"Putting items in levelDB\", \"method\": \"postACL\"}")
+			log.Fatalf("{\"error\": \"Putting items in levelDB\", \"method\": \"postACL\"}")
 			c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})
 			return
 		}
@@ -158,9 +163,10 @@ func checkACL(tokens *Set, db *leveldb.DB, kv *capi.KV) gin.HandlerFunc {
 		}
 
 		namespace := parts[0]
-		value, _, err := kv.Get(namespace+"/"+string(data)+"/"+relation, nil)
+		s := hashSHA256(string(data) + "/" + relation)
+		value, _, err := kv.Get(namespace+"/"+s, nil)
 		if err != nil {
-			fmt.Println("{\"error\": \"Checking if relation is valid\", \"method\": \"checkACL\"}")
+			log.Fatalf("{\"error\": \"Checking if relation is valid\", \"method\": \"checkACL\"}")
 			c.JSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})
 			return
 		}
@@ -177,31 +183,37 @@ func postNamespace(tokens *Set, kv *capi.KV) gin.HandlerFunc {
 			return
 		}
 		var newNamespace fdasConfig
-		relatshionshipMap := make(map[string][]string)
-		allRelations := ""
 		if err := c.BindJSON(&newNamespace); err != nil {
 			c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "invalid namespace definition"})
 			return
 		}
-		pair, _, err := kv.Get(newNamespace.Namespace, nil)
+		namespace := strings.ReplaceAll(newNamespace.Namespace, "/", "")
+		if namespace == "" {
+			c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "invalid namespace definition, using empty string"})
+			return
+		}
+
+		relatshionshipMap := make(map[string][]string)
+		allRelations := ""
+		pair, _, err := kv.Get(namespace, nil)
 		if err != nil {
-			fmt.Println("{\"error\": \"Getting items from consul\", \"method\": \"postNamespace\"}")
+			log.Fatalf("{\"error\": \"Getting items from consul\", \"method\": \"postNamespace\"}")
 			c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})
 			return
 		}
 		var oldKeys []string
 		var oldValues [][]byte
 		if pair != nil {
-			oldKeys, _, err = kv.Keys(newNamespace.Namespace, "", nil)
+			oldKeys, _, err = kv.Keys(namespace, "", nil)
 			if err != nil {
-				fmt.Println("{\"error\": \"Reading keys from consul\", \"method\": \"postNamespace\"}")
+				log.Fatalf("{\"error\": \"Reading keys from consul\", \"method\": \"postNamespace\"}")
 				c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})
 				return
 			}
 			for _, key := range oldKeys {
 				value, _, err := kv.Get(key, nil)
 				if err != nil {
-					fmt.Println("{\"error\": \"Reading values from consul\", \"method\": \"postNamespace\"}")
+					log.Fatalf("{\"error\": \"Reading values from consul\", \"method\": \"postNamespace\"}")
 					c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})
 					return
 				}
@@ -211,6 +223,7 @@ func postNamespace(tokens *Set, kv *capi.KV) gin.HandlerFunc {
 		}
 
 		for key, value := range newNamespace.Relations {
+			key = strings.ReplaceAll(key, "/", "")
 			if key == "" {
 				c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "invalid namespace definition, using empty key"})
 				// Roll-back kv.Delete(key, nil)
@@ -239,18 +252,18 @@ func postNamespace(tokens *Set, kv *capi.KV) gin.HandlerFunc {
 				}
 			}
 
-			err = createRelations(newNamespace.Namespace, key, value.Union, &relatshionshipMap, kv)
+			err = createRelations(namespace, key, value.Union, &relatshionshipMap, kv)
 			if err != nil {
-				fmt.Println("{\"error\": \"Creating relatshionships in consul\", \"method\": \"postNamespace\"}")
+				log.Fatalf("{\"error\": \"Creating relatshionships in consul\", \"method\": \"postNamespace\"}")
 				c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})
 				return
 			}
 		}
 
-		p := &capi.KVPair{Key: newNamespace.Namespace, Value: []byte(allRelations)}
+		p := &capi.KVPair{Key: namespace, Value: []byte(allRelations)}
 		_, err = kv.Put(p, nil)
 		if err != nil {
-			fmt.Println("{\"error\": \"Putting items in levelDB\", \"method\": \"postNamespace\"}")
+			log.Fatalf("{\"error\": \"Putting items in levelDB\", \"method\": \"postNamespace\"}")
 			c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})
 			return
 		}
@@ -259,10 +272,10 @@ func postNamespace(tokens *Set, kv *capi.KV) gin.HandlerFunc {
 	}
 }
 
-func getToken(tokens *Set, db *leveldb.DB) gin.HandlerFunc {
+func getToken(encryptionKey string, tokens *Set, db *leveldb.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var tokensString string
-		id := uuid.New().String()
+		id := strings.ReplaceAll(uuid.New().String(), "-", "")
 		tokens.Add(id)
 		data, err := db.Get([]byte("tokens"), nil)
 		if err != nil {
@@ -271,9 +284,16 @@ func getToken(tokens *Set, db *leveldb.DB) gin.HandlerFunc {
 			tokensString = string(data) + "," + id
 		}
 
-		err = db.Put([]byte("tokens"), []byte(tokensString), nil)
+		tokensEncrypted, err := encrypt([]byte(tokensString), []byte(encryptionKey))
 		if err != nil {
-			fmt.Println("{\"error\": \"Putting new user token in levelDB\", \"method\": \"getToken\"}")
+			log.Fatalf("{\"error\": \"Encrypting tokens\", \"method\": \"getToken\"}")
+			c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})
+			return
+		}
+
+		err = db.Put([]byte("tokens"), tokensEncrypted, nil)
+		if err != nil {
+			log.Fatalf("{\"error\": \"Putting new user token in levelDB\", \"method\": \"getToken\"}")
 			c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})
 			return
 		}
@@ -290,7 +310,7 @@ func invalidateToken(tokens *Set, db *leveldb.DB) gin.HandlerFunc {
 
 		err := db.Put([]byte("tokens"), []byte(tokensString), nil)
 		if err != nil {
-			fmt.Println("{\"error\": \"Putting other tokens in levelDB\", \"method\": \"invalidateToken\"}")
+			log.Fatalf("{\"error\": \"Putting other tokens in levelDB\", \"method\": \"invalidateToken\"}")
 			c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "internal server error"})
 			return
 		}
@@ -329,11 +349,11 @@ func main() {
 	defer levelDB.Close()
 
 	// ISSUED API TOKENS
-	tokens := loadTokens(levelDB)
+	tokens := loadTokens(levelDB, appConfig.EncryptionKey)
 
 	// GIN API
 	router := gin.Default()
-	router.GET("/api/token", getToken(tokens, levelDB))
+	router.GET("/api/token", getToken(appConfig.EncryptionKey, tokens, levelDB))
 	router.PUT("/api/invalidate/:token", invalidateToken(tokens, levelDB))
 	router.POST("/api/namespace/:token", postNamespace(tokens, consulKV))
 	router.POST("/api/acl/:token", postACL(tokens, levelDB, consulKV))
@@ -342,12 +362,16 @@ func main() {
 	router.Run("0.0.0.0:8080")
 }
 
-func loadTokens(db *leveldb.DB) *Set {
+func loadTokens(db *leveldb.DB, encryptionKey string) *Set {
 	allIssuedTokens := NewSet()
 	data, err := db.Get([]byte("tokens"), nil)
 
 	if err == nil {
-		allIssuedTokens.AddMulti(strings.Split(string(data), ",")...)
+		tokens, err := decrypt(data, []byte(encryptionKey))
+		if err != nil {
+			panic(err)
+		}
+		allIssuedTokens.AddMulti(strings.Split(string(tokens), ",")...)
 	}
 
 	return allIssuedTokens
@@ -356,10 +380,12 @@ func loadTokens(db *leveldb.DB) *Set {
 func createRelations(namespace string, key string, unionItems []string, relatshionshipMap *map[string][]string, kv *capi.KV) error {
 	var err error
 	for _, parent := range unionItems {
-		p := &capi.KVPair{Key: namespace + "/" + parent + "/" + key, Value: []byte{}}
+		parent = strings.ReplaceAll(parent, "/", "")
+		s := hashSHA256(parent + "/" + key)
+		p := &capi.KVPair{Key: namespace + "/" + s, Value: []byte{}}
 		_, err = kv.Put(p, nil)
 		if err != nil {
-			fmt.Println("{\"error\": \"Critical while putting items in consul\", \"method\": \"createRelations\"}")
+			log.Fatalf("{\"error\": \"Critical while putting items in consul\", \"method\": \"createRelations\"}")
 			return err
 		}
 		if len((*relatshionshipMap)[parent]) != 0 {
@@ -379,4 +405,62 @@ func checkIfRelationValid(relation string, allAvailableRelations *[]string) bool
 		}
 	}
 	return false
+}
+
+func hashSHA256(input string) string {
+	hash := sha256.Sum256([]byte(input))
+	return fmt.Sprintf("%x", hash)
+}
+
+func generateRandomBytes(size int) ([]byte, error) {
+	bytes := make([]byte, size)
+	if _, err := rand.Read(bytes); err != nil {
+		return nil, err
+	}
+	return bytes, nil
+}
+
+func encrypt(plainText, key []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return []byte{}, err
+	}
+
+	aesGCM, err := cipher.NewGCM(block)
+	if err != nil {
+		return []byte{}, err
+	}
+
+	nonce, err := generateRandomBytes(aesGCM.NonceSize())
+	if err != nil {
+		return []byte{}, err
+	}
+
+	cipherText := aesGCM.Seal(nonce, nonce, plainText, nil)
+	return cipherText, nil
+}
+
+func decrypt(cipherText []byte, key []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return []byte{}, err
+	}
+
+	aesGCM, err := cipher.NewGCM(block)
+	if err != nil {
+		return []byte{}, err
+	}
+
+	nonceSize := aesGCM.NonceSize()
+	if len(cipherText) < nonceSize {
+		return []byte{}, fmt.Errorf("ciphertext too short")
+	}
+
+	nonce, cipherText := cipherText[:nonceSize], cipherText[nonceSize:]
+	plainText, err := aesGCM.Open(nil, nonce, cipherText, nil)
+	if err != nil {
+		return []byte{}, err
+	}
+
+	return plainText, nil
 }
