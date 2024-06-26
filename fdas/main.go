@@ -310,7 +310,11 @@ func main() {
 
 	// ConsulDB SETUP
 	consulConfig := capi.DefaultConfig()
-	consulConfig.Address = "consul:8500" // Use "consul" host
+	consulAddress := os.Getenv("CONSUL_ADDRESS")
+	if consulAddress == "" {
+		consulAddress = "localhost:8500" // Default value
+	}
+	consulConfig.Address = consulAddress
 	consulClient, err := capi.NewClient(consulConfig)
 	if err != nil {
 		panic(err)
