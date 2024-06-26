@@ -305,4 +305,9 @@ $RECYCLE.BIN/
 # Windows shortcuts
 *.lnk
 
+# Additional
+*config.json
+*config.yaml
+fdas/db/
+
 # End of https://www.toptal.com/developers/gitignore/api/macos,windows,linux,go,goland,visualstudiocode,jetbrains
