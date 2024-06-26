@@ -149,7 +149,7 @@ func checkACL(tokens *Set, db *leveldb.DB, kv *capi.KV) gin.HandlerFunc {
 			return
 		}
 		if bytes.Equal(data, []byte(relation)) {
-			c.JSON(http.StatusOK, true)
+			c.JSON(http.StatusOK, gin.H{"authorized": true})
 			return
 		}
 
