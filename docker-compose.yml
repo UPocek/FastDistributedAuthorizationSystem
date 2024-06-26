@@ -11,6 +11,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    environment:
+      - CONSUL_HTTP_ADDR=consul:8500
     command: ["./main"]
     depends_on:
       - consul
