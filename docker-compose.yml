@@ -12,7 +12,7 @@ services:
       context: .
       dockerfile: Dockerfile
     environment:
-      - CONSUL_HTTP_ADDR=consul:8500
+      - CONSUL_ADDRESS=consul:8500
     command: ["./main"]
     depends_on:
       - consul
