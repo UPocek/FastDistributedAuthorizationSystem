@@ -100,7 +100,6 @@ func postACL(tokens *Set, db *leveldb.DB, kv *capi.KV) gin.HandlerFunc {
 
 		if err != nil || object == "" || relation == "" || user == "" {
 			c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "invalid ACL definition"})
-			panic(err)
 			return
 		}
 		objectParts := strings.SplitN(object, ":", 2)
