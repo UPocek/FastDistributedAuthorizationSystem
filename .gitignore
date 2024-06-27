@@ -29,11 +29,7 @@ go.work
 # Reference: https://intellij-support.jetbrains.com/hc/en-us/articles/206544839
 
 # User-specific stuff
-.idea/**/workspace.xml
-.idea/**/tasks.xml
-.idea/**/usage.statistics.xml
-.idea/**/dictionaries
-.idea/**/shelf
+.idea/
 
 # AWS User-specific
 .idea/**/aws.xml
@@ -304,5 +300,10 @@ $RECYCLE.BIN/
 
 # Windows shortcuts
 *.lnk
+
+# Additional
+*config.json
+*config.yaml
+fdas/db/
 
 # End of https://www.toptal.com/developers/gitignore/api/macos,windows,linux,go,goland,visualstudiocode,jetbrains

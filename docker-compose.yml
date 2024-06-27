@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  consul:
+    image: consul:1.13.2
+    volumes:
+      - ./consul/config:/consul/config
+    command: agent -dev -client=0.0.0.0
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - CONSUL_ADDRESS=consul:8500
+    command: ["./main"]
+    depends_on:
+      - consul
+
+  nginx:
+    image: nginx:latest
+    ports:
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/localhost.crt:/etc/ssl/certs/localhost.crt:ro
+      - ./nginx/localhost.key:/etc/ssl/private/localhost.key:ro
+    depends_on:
+      - app
