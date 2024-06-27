@@ -13,3 +13,5 @@ RUN go mod download
 
 # Build the Go app
 RUN go build -o main
+
+RUN rm -rf ./db
